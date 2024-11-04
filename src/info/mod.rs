@@ -1,16 +1,17 @@
 /*!
 Extrai informações do website do ConsultaCA e as usa para popular o struct CA.
 */
-// TODO: testar
 // TODO: fazer a versão debug (erros existem) e release (erros não existem)
 mod util;
-use chrono::{NaiveDate, NaiveTime};
+use chrono::NaiveDate;
 use scraper::{ElementRef, Html, Selector};
-use std::{collections::HashMap, str::FromStr};
-use util::{nth_child, Result};
+use std::collections::HashMap;
+use util::Result;
 
-
-#[derive(Debug)]
+/// Representa um CA.
+/// A única coisa que o struct tem de saber é o código do CA.
+/// O resto das informações será retirado do sítio https://consultaca.com/.
+#[derive(Debug, PartialEq)]
 pub struct CA {
     descricao: String,
     grupo: String,
@@ -28,13 +29,13 @@ pub struct CA {
     laudo: Laudo,
     fabricante: Fabricante,
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Laudo {
     descricao: String,
     cnpj_laboratorio: u64,
     razao_social_laboratorio: String,
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Fabricante {
     razao_social: String,
     cnpj: u64,
@@ -44,8 +45,9 @@ struct Fabricante {
     qtd_cas: u16,
     link: String,
 }
+
 impl CA {
-    /// Consulta a página do website do ConsultaCA e popula uma instância do struct CA
+    /// Consulta a página do website do ConsultaCA e popula uma instância do struct CA.
     pub async fn consultar(ca: u32, client: reqwest::Client) -> Result<CA> {
         let resp = client
             .get("https://consultaca.com/".to_owned() + &ca.to_string())
@@ -58,6 +60,10 @@ impl CA {
             },
             Err(e) => panic!("{}", e),
         };
+
+        // A extração da informação ocorre de duas formas:
+        // através do body do site e através dum HashMap
+        // gerado a partir dos parágrafos do site.
         let body = Html::parse_document(&body_txt);
         let p_info_hashmap = CA::paragrafos_hashmap(&body)?;
 
@@ -114,61 +120,76 @@ impl CA {
             // [chave, valor]
             let par = texto.split(":").collect::<Vec<&str>>();
             if par.len() == 2 && !&par[1].is_empty() {
-                resultado.insert(par[0].to_lowercase(), par[1].to_string());
+                resultado.insert(par[0].trim().to_lowercase(), par[1].trim().to_string());
             }
         }
         Ok(resultado)
     }
 
+    /// Retorna valor do `hashmap` associado à chave `informacao` depois
+    /// de ter sido processado pela função `parse_callback`.
+    /// Se o hashmap não tiver a chave `informacao`, então a função
+    /// retorna o valor do argumento `padrao`.
+    /// # Exemplo
+    /// ```rust
+    /// let info = HashMap::from([("chave".to_string(), "valor".to_string())]);
+    /// assert_eq!(CA::extrair("chave", &info, |a| a.to_uppercase(), "".to_string()), "VALOR");
+    /// ```
     fn extrair<T, F>(
         informacao: &str,
         hashmap: &HashMap<String, String>,
         parse_callback: F,
-        padrao: T
+        padrao: T,
     ) -> T
     where
         F: Fn(String) -> T,
     {
         let result = match hashmap.get(informacao) {
             Some(value) => parse_callback(value.to_string()),
-            None => return padrao
+            None => return padrao,
         };
         result
     }
-    pub fn validade(p_info: &HashMap<String, String>) -> NaiveDate {
-        CA::extrair("validade", p_info, |a| {
-            // valor na forma `26/06/2029vencerá daqui 1699 dias`
-            let validade_vec = &a[..10];
-            match NaiveDate::parse_from_str(validade_vec, "%d/%m/%Y") {
-                Ok(v)=>v,
-                Err(_)=>return NaiveDate::parse_from_str("01/01/0001", "%d/%m/%Y").unwrap()
-            }
-        }, NaiveDate::parse_from_str("01/01/0001", "%d/%m/%Y").unwrap())
+
+    fn validade(p_info: &HashMap<String, String>) -> NaiveDate {
+        CA::extrair(
+            "validade",
+            p_info,
+            |a| {
+                // valor na forma `26/06/2029vencerá daqui 1699 dias`
+                let validade_vec = &a[..10];
+                match NaiveDate::parse_from_str(validade_vec, "%d/%m/%Y") {
+                    Ok(v) => v,
+                    Err(_) => NaiveDate::parse_from_str("01/01/0001", "%d/%m/%Y").unwrap(),
+                }
+            },
+            NaiveDate::parse_from_str("01/01/0001", "%d/%m/%Y").unwrap(),
+        )
     }
-    pub fn grupo(body: &Html) -> String {
+    fn grupo(body: &Html) -> String {
         let selector = Selector::parse(".grupo-epi-desc").unwrap();
         let grupo = match body.select(&selector).next() {
             Some(e) => e.text().collect::<String>(),
             None => return "".to_string(),
         };
         if grupo.is_empty() {
-return "".to_string();
+            return "".to_string();
         }
         grupo
     }
-    pub fn descricao(body: &Html) -> String {
+    fn descricao(body: &Html) -> String {
         // a descrição é o primeiro h1 da página
         let selector = Selector::parse("h1").unwrap();
         let descricao = match body.select(&selector).next() {
             Some(e) => e.text().collect::<String>(),
-            None => return "".to_string()
+            None => return "".to_string(),
         };
         if descricao.is_empty() {
-return "".to_string();
+            return "".to_string();
         }
         descricao
     }
-    pub fn normas(body: &Html) -> Vec<String> {
+    fn normas(body: &Html) -> Vec<String> {
         let selector = Selector::parse(".lista-normas").unwrap();
         let normas = match body.select(&selector).next() {
             Some(e) => e.text().map(|x| x.to_string()).collect::<Vec<String>>(),
@@ -179,41 +200,48 @@ return "".to_string();
         }
         normas
     }
-    pub fn processo(p_info: &HashMap<String, String>) -> u64 {
-        CA::extrair("n° processo", p_info, |a| match a.trim().parse::<u64>() {
-            Ok(v)=>v,
-            Err(_)=>return 0
-        }, 0)
+    fn processo(p_info: &HashMap<String, String>) -> u64 {
+        CA::extrair(
+            "n° processo",
+            p_info,
+            |a| a.trim().parse::<u64>().unwrap_or_default(), 
+            0,
+        )
     }
-    pub fn natureza(p_info: &HashMap<String, String>) -> String {
+    fn natureza(p_info: &HashMap<String, String>) -> String {
         CA::extrair("natureza", p_info, |a| a, "".to_string())
     }
-    pub fn situacao(p_info: &HashMap<String, String>) -> String {
+    fn situacao(p_info: &HashMap<String, String>) -> String {
         CA::extrair("situação", p_info, |a| a, "".to_string())
     }
-    pub fn cores(p_info: &HashMap<String, String>) -> Vec<String> {
-        CA::extrair("cor", p_info, |a| {
-            let cores_vec = a
-                .split(", ")
-                .map(|x| x.trim().to_lowercase().replace(".", ""))
-                .collect::<Vec<String>>();
-            cores_vec
-        }, vec![])
+    fn cores(p_info: &HashMap<String, String>) -> Vec<String> {
+        CA::extrair(
+            "cor",
+            p_info,
+            |a| {
+                let cores_vec = a
+                    .split(", ")
+                    .map(|x| x.trim().to_lowercase().replace(".", ""))
+                    .collect::<Vec<String>>();
+                cores_vec
+            },
+            vec![],
+        )
     }
-    pub fn marcacao(p_info: &HashMap<String, String>) -> String {
+    fn marcacao(p_info: &HashMap<String, String>) -> String {
         CA::extrair("marcação", p_info, |a| a, "".to_string())
     }
-    pub fn referencias(p_info: &HashMap<String, String>) -> String {
+    fn referencias(p_info: &HashMap<String, String>) -> String {
         CA::extrair("referências", p_info, |a| a, "".to_string())
     }
-    pub fn aprovado_para(p_info: &HashMap<String, String>) -> String {
+    fn aprovado_para(p_info: &HashMap<String, String>) -> String {
         CA::extrair("aprovado para", p_info, |a| a, "".to_string())
     }
-    pub fn descricao_completa(body: &Html) -> String {
+    fn descricao_completa(body: &Html) -> String {
         let nome_h3 = "descrição completa";
         let selector = match Selector::parse("h3") {
             Ok(v) => v,
-            Err(_) => return "".to_string()
+            Err(_) => return "".to_string(),
         };
         let h3s = body.select(&selector);
         for h3 in h3s {
@@ -234,100 +262,208 @@ return "".to_string();
 }
 
 impl Laudo {
-    pub fn descricao(p_info: &HashMap<String, String>) -> String {
+    fn descricao(p_info: &HashMap<String, String>) -> String {
         CA::extrair("n° do laudo", p_info, |a| a, "".to_string())
     }
-    pub fn razao_social_laboratorio(p_info: &HashMap<String, String>) -> String {
+    fn razao_social_laboratorio(p_info: &HashMap<String, String>) -> String {
         CA::extrair("razão social", p_info, |a| a, "".to_string())
     }
 
-    pub fn cnpj_laboratorio(p_info: &HashMap<String, String>) -> u64 {
-        CA::extrair("cnpj do laboratório", p_info, |a| {
-            // quero somente os números do CNPJ
-            match a.chars()
-                .filter(|x| x.is_numeric())
-                .collect::<String>()
-                .parse::<u64>() {
-                Ok(v)=>v,
-                Err(_)=>return 0 }
-        }, 0)
+    fn cnpj_laboratorio(p_info: &HashMap<String, String>) -> u64 {
+        CA::extrair(
+            "cnpj do laboratório",
+            p_info,
+            |a| {
+                // quero somente os números do CNPJ
+                a
+                    .chars()
+                    .filter(|x| x.is_numeric())
+                    .collect::<String>()
+                    .parse::<u64>().unwrap_or_default()
+            },
+            0,
+        )
     }
 }
 impl Fabricante {
     //TODO: colocar CA nos erros para facilitar debugging.
-    pub fn link(body: &Html) -> String {
+    fn link(body: &Html) -> String {
         let padrao = "".to_string();
         let selector = match Selector::parse("[href*=\"https://consultaca.com/fabricantes/\"]") {
-            Ok(v)=>v,
-            Err(_)=>return padrao
+            Ok(v) => v,
+            Err(_) => return padrao,
         };
         let selected_iter = body.select(&selector);
-        let a_element = match selected_iter.into_iter().next(){
+        let a_element = match selected_iter.into_iter().next() {
             Some(v) => v,
-            None => return padrao
+            None => return padrao,
         };
         match a_element.attr("href") {
             Some(v) => v.to_string(),
-            None => return padrao
+            None => padrao,
         }
     }
-    pub fn razao_social(p_info: &HashMap<String, String>) -> String {
+    fn razao_social(p_info: &HashMap<String, String>) -> String {
         CA::extrair("razão social", p_info, |a| a, "".to_string())
     }
-    pub fn cnpj(p_info: &HashMap<String, String>) -> u64 {
-        CA::extrair("cnpj", p_info, |a| {
-            // quero somente os números do CNPJ
-            match a.chars()
-                .filter(|x| x.is_numeric())
-                .collect::<String>()
-                .parse::<u64>() {
-                Ok(v)=>v,
-                Err(_)=>return 0 
-            }
-        }, 0)
+    fn cnpj(p_info: &HashMap<String, String>) -> u64 {
+        CA::extrair(
+            "cnpj",
+            p_info,
+            |a| {
+                // quero somente os números do CNPJ
+                a
+                    .chars()
+                    .filter(|x| x.is_numeric())
+                    .collect::<String>()
+                    .parse::<u64>().unwrap_or_default()
+
+            },
+            0,
+        )
     }
-    pub fn nome_fantasia(p_info: &HashMap<String, String>) -> String {
+    fn nome_fantasia(p_info: &HashMap<String, String>) -> String {
         CA::extrair("nome fantasia", p_info, |a| a, "".to_string())
     }
-    pub fn cidade(p_info: &HashMap<String, String>) -> String {
+    fn cidade(p_info: &HashMap<String, String>) -> String {
         let padrao = "".to_string();
         let cidade_uf_str = CA::extrair("cidade/uf", p_info, |a| a, "".to_string());
-        if cidade_uf_str.is_empty(){
-            return "".to_string()
+        if cidade_uf_str.is_empty() {
+            return "".to_string();
         }
         let cidade_uf_vec = cidade_uf_str.split("/").collect::<Vec<&str>>();
         // se par existe, então ...
-        if (cidade_uf_vec.len()==2){
+        if cidade_uf_vec.len() == 2 {
             cidade_uf_vec[0].to_string()
         } else {
             padrao
         }
     }
-    pub fn uf(p_info: &HashMap<String, String>) -> String {
+    fn uf(p_info: &HashMap<String, String>) -> String {
         let padrao = "".to_string();
         // we dont care about DRY around here
-        let cidade_uf_str = CA::extrair("cidade/uf", p_info, |a| a,"".to_string());
-        if cidade_uf_str.is_empty(){
-            return "".to_string()
+        let cidade_uf_str = CA::extrair("cidade/uf", p_info, |a| a, "".to_string());
+        if cidade_uf_str.is_empty() {
+            return "".to_string();
         }
         let cidade_uf_vec = cidade_uf_str.split("/").collect::<Vec<&str>>();
         // se par existe, então ...
-        if (cidade_uf_vec.len()==2){
+        if cidade_uf_vec.len() == 2 {
             cidade_uf_vec[1].to_string()
         } else {
             padrao
         }
     }
-    pub fn qtd_cas(body: &Html) -> u16 {
+    fn qtd_cas(body: &Html) -> u16 {
         let padrao = 0;
         let selector = Selector::parse(".total.info.load-blockui").unwrap();
         let result = match body.select(&selector).next() {
             Some(e) => match e.text().collect::<String>().parse::<u16>() {
-                Ok(v)=> v,
-                Err(_) => return padrao
+                Ok(v) => v,
+                Err(_) => return padrao,
             },
             None => return padrao,
         };
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_extrair() {
+        let info = HashMap::from([("chave".to_string(), "valor".to_string())]);
+        assert_eq!(
+            CA::extrair("chave", &info, |a| a.to_string(), "".to_string()),
+            "valor"
+        );
+    }
+
+    #[test]
+    fn test_extrair_sem_key_no_hashmap() {
+        let info = HashMap::from([]);
+        assert_eq!(
+            CA::extrair("chave", &info, |a| a.to_string(), "".to_string()),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_extrair_parsing() {
+        let info = HashMap::from([("chave".to_string(), "valor".to_string())]);
+        assert_eq!(
+            CA::extrair("chave", &info, |a| a.to_uppercase(), "".to_string()),
+            "VALOR"
+        );
+    }
+
+    #[test]
+    fn test_paragrafos_hashmap() {
+        let html = r#"
+    <!DOCTYPE html>
+    <meta charset="utf-8">
+     <p>
+         <strong>N° Processo:</strong>
+         <br>
+         19980274164202499
+     </p>
+     <p><strong>Situação:</strong><br><span style="color: rgb(255, 0, 0); font-weight: bold; --darkreader-inline-color: #ff1a1a;" data-darkreader-inline-color="">VENCIDO</span></p>
+"#;
+
+        let documento = Html::parse_document(html);
+        let resultado = CA::paragrafos_hashmap(&documento).expect("criação do hashmap falhou.");
+        assert_eq!(
+            resultado,
+            HashMap::from([
+                ("n° processo".to_string(), "19980274164202499".to_string()),
+                ("situação".to_string(), "VENCIDO".to_string())
+            ])
+        );
+    }
+    #[tokio::test]
+    async fn test_consultar() {
+        let ca_codigo = 32551;
+        let client = reqwest::Client::new();
+        let ca = match CA::consultar(ca_codigo, client).await {
+            Ok(v) => v,
+            Err(e) => panic!("erro na consulta: {:#?}", e),
+        };
+        let ca_esperado = CA {
+    descricao: "CALÇA".to_string(),
+    grupo: "Proteção dos Membros Inferiores".to_string(),
+    natureza: "Nacional".to_string(),
+    validade: NaiveDate::from_ymd_opt(2026,10, 8).unwrap(),
+    descricao_completa: "Calça de segurança confeccionada em uma camada de tecido Uniforte Pro FR, composto por 100% de algodão, fabricado pela empresa Companhia de Tecidos Santanense, com gramatura nominal de 7,66 oz/yd² (260 g/m²), ATPV 9,6 cal/cm².".to_string(),
+    situacao: "VÁLIDO".to_string(),
+    processo: 19980216122202352,
+    aprovado_para: "PROTEÇÃO DAS PERNAS DO USUÁRIO CONTRA AGENTES TÉRMICOS PROVENIENTES DE ARCO ELÉTRICO E FOGO REPENTINO.".to_string(),
+    cores: vec![],
+    marcacao: "Na etiqueta".to_string(),
+    referencias: "F23.16".to_string(),
+    normas: vec![
+        "ASTM D 6413:2015".to_string(),
+        "ASTM F 1506-10a".to_string(),
+        "ASTM F 1930:2018".to_string(),
+        "ASTM F1959/F1959M-14".to_string(),
+        "ASTM F2621-19".to_string(),
+    ],
+    ca: 32551,
+    laudo: Laudo {
+        descricao: "85.858; 87.820; 87.821.".to_string().to_string(),
+        cnpj_laboratorio: 63025530004282,
+        razao_social_laboratorio: "SEÇÃO TÉCNICA DE DESENVOLVIMENTO TECNOLÓGICO EM SAÚDE - IEE/USP".to_string(),
+    },
+    fabricante: Fabricante {
+        razao_social: "SEÇÃO TÉCNICA DE DESENVOLVIMENTO TECNOLÓGICO EM SAÚDE - IEE/USP".to_string(),
+        cnpj: 177445000141,
+        nome_fantasia: "FARP UNIFORMES".to_string(),
+        cidade: "ITUMBIARA".to_string(),
+        uf: "GO".to_string(),
+        qtd_cas: 28,
+        link: "".to_string(),
+    }
+};
+        assert_eq!(ca,ca_esperado)
     }
 }

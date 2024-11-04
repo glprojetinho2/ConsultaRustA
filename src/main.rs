@@ -1,12 +1,10 @@
 use std::env::args;
 
-use scraper::{Html, Selector};
-
 mod info;
 
 #[tokio::main]
 async fn main() {
-    let ca = match args().skip(1).next() {
+    let ca = match args().nth(1){
         Some(v) => match v.parse::<u32>() {
             Ok(v) => v,
             Err(_) => panic!("input não é numérico.")
