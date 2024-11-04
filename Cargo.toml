@@ -8,3 +8,7 @@ chrono = "^0.4"
 scraper = "^0.20"
 reqwest = "^0.12"
 tokio = { version = "1", features = ["full"] }
+
+[[bin]]
+path="src/main.rs"
+name="consultarca"
