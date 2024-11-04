@@ -20,7 +20,7 @@ O comando é autoexplicativo (por enquanto). Veja o uso básico:
 ```bash
 consultarca 445
 ```
-```json
+```
 CA {
     descricao: "RESPIRADOR PURIFICADOR DE AR TIPO PEÇA SEMIFACIAL FILTRANTE PARA PARTÍCULAS PFF1",
     grupo: "Proteção Respiratória",
