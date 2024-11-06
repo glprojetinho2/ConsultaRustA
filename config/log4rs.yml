@@ -1,0 +1,27 @@
+refresh_rate: 30 seconds
+
+appenders:
+  other:
+    kind: file
+    path: /tmp/trash.log
+  main:
+    kind: file
+    path: log/main.log
+  test:
+    kind: file
+    path: log/catest.log
+    append: false
+  stdout:
+    kind: console
+    target: stdout
+root:
+  appenders:
+    - other
+  
+loggers:
+  consultarca::info:
+    level: trace
+    appenders:
+      - main
+      - test
+    additive: false

@@ -4,8 +4,10 @@ Extrai informações do website do ConsultaCA e as usa para popular o struct CA.
 // TODO: fazer a versão debug (erros existem) e release (erros não existem)
 mod util;
 use chrono::NaiveDate;
+use log::{error, warn};
 use scraper::{ElementRef, Html, Selector};
 use std::collections::HashMap;
+use util::extrair_numeros;
 use util::Result;
 
 /// Representa um CA.
@@ -29,23 +31,6 @@ pub struct CA {
     laudo: Laudo,
     fabricante: Fabricante,
 }
-#[derive(Debug, PartialEq)]
-struct Laudo {
-    descricao: String,
-    cnpj_laboratorio: u64,
-    razao_social_laboratorio: String,
-}
-#[derive(Debug, PartialEq)]
-struct Fabricante {
-    razao_social: String,
-    cnpj: u64,
-    nome_fantasia: String,
-    cidade: String,
-    uf: String,
-    qtd_cas: u16,
-    link: String,
-}
-
 impl CA {
     /// Consulta a página do website do ConsultaCA e popula uma instância do struct CA.
     pub async fn consultar(ca: u32, client: reqwest::Client) -> Result<CA> {
@@ -56,46 +41,89 @@ impl CA {
         let body_txt = match resp {
             Ok(r) => match r.text().await {
                 Ok(txt) => txt,
-                Err(e) => panic!("{}", e),
+                Err(e) => return Err(e.into()),
             },
             Err(e) => panic!("{}", e),
         };
+        let extrator = Extrator::new(ca);
 
         // A extração da informação ocorre de duas formas:
         // através do body do site e através dum HashMap
         // gerado a partir dos parágrafos do site.
         let body = Html::parse_document(&body_txt);
-        let p_info_hashmap = CA::paragrafos_hashmap(&body)?;
+        let p_info_hashmap = Extrator::paragrafos_hashmap(&body)?;
 
         Ok(CA {
-            validade: CA::validade(&p_info_hashmap),
-            processo: CA::processo(&p_info_hashmap),
-            descricao: CA::descricao(&body),
-            grupo: CA::grupo(&body),
-            natureza: CA::natureza(&p_info_hashmap),
-            situacao: CA::situacao(&p_info_hashmap),
-            aprovado_para: CA::aprovado_para(&p_info_hashmap),
-            cores: CA::cores(&p_info_hashmap),
-            marcacao: CA::marcacao(&p_info_hashmap),
-            referencias: CA::referencias(&p_info_hashmap),
-            normas: CA::normas(&body),
-            descricao_completa: CA::descricao_completa(&body),
+            validade: extrator.validade(&p_info_hashmap),
+            processo: extrator.processo(&p_info_hashmap),
+            descricao: extrator.descricao(&body),
+            grupo: extrator.grupo(&body),
+            natureza: extrator.natureza(&p_info_hashmap),
+            situacao: extrator.situacao(&p_info_hashmap),
+            aprovado_para: extrator.aprovado_para(&p_info_hashmap),
+            cores: extrator.cores(&p_info_hashmap),
+            marcacao: extrator.marcacao(&p_info_hashmap),
+            referencias: extrator.referencias(&p_info_hashmap),
+            normas: extrator.normas(&body),
+            descricao_completa: extrator.descricao_completa(&body),
             ca,
-            laudo: Laudo {
-                descricao: Laudo::descricao(&p_info_hashmap),
-                cnpj_laboratorio: Laudo::cnpj_laboratorio(&p_info_hashmap),
-                razao_social_laboratorio: Laudo::razao_social_laboratorio(&p_info_hashmap),
-            },
-            fabricante: Fabricante {
-                razao_social: Fabricante::razao_social(&p_info_hashmap),
-                cnpj: Fabricante::cnpj(&p_info_hashmap),
-                nome_fantasia: Fabricante::nome_fantasia(&p_info_hashmap),
-                cidade: Fabricante::cidade(&p_info_hashmap),
-                uf: Fabricante::uf(&p_info_hashmap),
-                qtd_cas: Fabricante::qtd_cas(&body),
-                link: Fabricante::link(&body),
-            },
+            laudo: Laudo::new(ca, &p_info_hashmap),
+            fabricante: Fabricante::new(ca, &p_info_hashmap, &body),
         })
+    }
+}
+/// Representa um laudo.
+#[derive(Debug, PartialEq)]
+struct Laudo {
+    descricao: String,
+    cnpj: u64,
+    razao_social: String,
+}
+impl Laudo {
+    fn new(ca: u32, p_info: &HashMap<String, String>) -> Self {
+        let extrator = Extrator::new(ca);
+        Laudo {
+            descricao: extrator.descricao_laboratorio(p_info),
+            razao_social: extrator.razao_social_laboratorio(p_info),
+            cnpj: extrator.cnpj_laboratorio(p_info),
+        }
+    }
+}
+
+/// Representa um fabricante.
+#[derive(Debug, PartialEq)]
+struct Fabricante {
+    razao_social: String,
+    cnpj: u64,
+    nome_fantasia: String,
+    cidade: String,
+    uf: String,
+    qtd_cas: u16,
+    link: String,
+}
+impl Fabricante {
+    fn new(ca: u32, p_info: &HashMap<String, String>, body: &Html) -> Self {
+        let extrator = Extrator::new(ca);
+        Fabricante {
+            cidade: extrator.cidade_fabricante(p_info),
+            uf: extrator.uf_fabricante(p_info),
+            razao_social: extrator.razao_social_fabricante(p_info),
+            cnpj: extrator.cnpj_fabricante(p_info),
+            nome_fantasia: extrator.nome_fantasia_fabricante(p_info),
+            qtd_cas: extrator.qtd_cas_fabricante(body),
+            link: extrator.link_fabricante(body),
+        }
+    }
+}
+
+/// Extrai dados da página do CA.
+struct Extrator {
+    ca: u32,
+}
+
+impl Extrator {
+    fn new(ca: u32) -> Self {
+        Extrator { ca }
     }
     /// Extrai informação específica duma lista de parágrafos da classe info.
     /// Esses parágrafos contém texto na forma chave:valor.
@@ -133,89 +161,115 @@ impl CA {
     /// # Exemplo
     /// ```rust
     /// let info = HashMap::from([("chave".to_string(), "valor".to_string())]);
-    /// assert_eq!(CA::extrair("chave", &info, |a| a.to_uppercase(), "".to_string()), "VALOR");
+    /// assert_eq!(self.extrair("chave", &info, |a| a.to_uppercase(), "".to_string()), "VALOR");
     /// ```
     fn extrair<T, F>(
+        &self,
         informacao: &str,
         hashmap: &HashMap<String, String>,
         parse_callback: F,
         padrao: T,
     ) -> T
     where
-        F: Fn(String) -> T,
+        F: Fn(String) -> Result<T>,
     {
         let result = match hashmap.get(informacao) {
-            Some(value) => parse_callback(value.to_string()),
-            None => return padrao,
+            Some(value) => match parse_callback(value.to_string()) {
+                Ok(value) => value,
+                Err(e) => {
+                    return {
+                        error!(
+                            "CA{} {informacao}: erro no parsing. Veja: {:#?}",
+                            self.ca, e
+                        );
+                        padrao
+                    }
+                }
+            },
+            None => {
+                return {
+                    warn!(
+                        "CA{}: chave '{informacao}' não está presente no hashmap.",
+                        self.ca
+                    );
+                    padrao
+                }
+            }
         };
         result
     }
 
-    fn validade(p_info: &HashMap<String, String>) -> NaiveDate {
-        CA::extrair(
+    /// Extrai texto de dentro de um elemento do HTML da página.
+    /// O fazemos partindo do primeiro elemento que corresponde ao
+    /// `seletor`.
+    fn so_com_seletor(&self, body: &Html, seletor: &str) -> String {
+        let selector = Selector::parse(seletor).unwrap();
+        let elemento_txt = match body.select(&selector).next() {
+            Some(e) => e.text().collect::<String>(),
+            None => {
+                return {
+                    warn!("CA{}: {seletor} não encontrado no iterator.", self.ca);
+                    "".to_string()
+                }
+            }
+        };
+        if elemento_txt.is_empty() {
+            return {
+                warn!("CA{}: {seletor} encontrado, mas está sem texto.", self.ca);
+                "".to_string()
+            };
+        }
+        elemento_txt
+    }
+
+    fn validade(&self, p_info: &HashMap<String, String>) -> NaiveDate {
+        self.extrair(
             "validade",
             p_info,
             |a| {
                 // valor na forma `26/06/2029vencerá daqui 1699 dias`
                 let validade_vec = &a[..10];
-                match NaiveDate::parse_from_str(validade_vec, "%d/%m/%Y") {
-                    Ok(v) => v,
-                    Err(_) => NaiveDate::parse_from_str("01/01/0001", "%d/%m/%Y").unwrap(),
-                }
+                Ok(NaiveDate::parse_from_str(validade_vec, "%d/%m/%Y")?)
             },
             NaiveDate::parse_from_str("01/01/0001", "%d/%m/%Y").unwrap(),
         )
     }
-    fn grupo(body: &Html) -> String {
-        let selector = Selector::parse(".grupo-epi-desc").unwrap();
-        let grupo = match body.select(&selector).next() {
-            Some(e) => e.text().collect::<String>(),
-            None => return "".to_string(),
-        };
-        if grupo.is_empty() {
-            return "".to_string();
-        }
-        grupo
+    fn grupo(&self, body: &Html) -> String {
+        self.so_com_seletor(body, ".grupo-epi-desc")
     }
-    fn descricao(body: &Html) -> String {
-        // a descrição é o primeiro h1 da página
-        let selector = Selector::parse("h1").unwrap();
-        let descricao = match body.select(&selector).next() {
-            Some(e) => e.text().collect::<String>(),
-            None => return "".to_string(),
-        };
-        if descricao.is_empty() {
-            return "".to_string();
-        }
-        descricao
+    fn descricao(&self, body: &Html) -> String {
+        self.so_com_seletor(body, "h1")
     }
-    fn normas(body: &Html) -> Vec<String> {
+    fn normas(&self, body: &Html) -> Vec<String> {
         let selector = Selector::parse(".lista-normas").unwrap();
         let normas = match body.select(&selector).next() {
             Some(e) => e.text().map(|x| x.to_string()).collect::<Vec<String>>(),
-            None => return vec![],
+            None => {
+                return {
+                    warn!("CA{}: norma não encontrada no iterator.", self.ca);
+                    vec![]
+                }
+            }
         };
         if normas.is_empty() {
-            return vec![];
+            return {
+                warn!("CA{}: normas encontradas, mas não têm conteúdo.", self.ca);
+                vec![]
+            };
         }
         normas
     }
-    fn processo(p_info: &HashMap<String, String>) -> u64 {
-        CA::extrair(
-            "n° processo",
-            p_info,
-            |a| a.trim().parse::<u64>().unwrap_or_default(), 
-            0,
-        )
+    fn processo(&self, p_info: &HashMap<String, String>) -> u64 {
+        self.extrair("n° processo", p_info, |a| Ok(a.trim().parse::<u64>()?), 0)
     }
-    fn natureza(p_info: &HashMap<String, String>) -> String {
-        CA::extrair("natureza", p_info, |a| a, "".to_string())
+    fn natureza(&self, p_info: &HashMap<String, String>) -> String {
+        self.extrair("natureza", p_info, Ok, "".to_string())
     }
-    fn situacao(p_info: &HashMap<String, String>) -> String {
-        CA::extrair("situação", p_info, |a| a, "".to_string())
+    fn situacao(&self, p_info: &HashMap<String, String>) -> String {
+        self.extrair("situação", p_info, Ok, "".to_string())
     }
-    fn cores(p_info: &HashMap<String, String>) -> Vec<String> {
-        CA::extrair(
+    fn cores(&self, p_info: &HashMap<String, String>) -> Vec<String> {
+        self.extrair(
             "cor",
             p_info,
             |a| {
@@ -223,21 +277,21 @@ impl CA {
                     .split(", ")
                     .map(|x| x.trim().to_lowercase().replace(".", ""))
                     .collect::<Vec<String>>();
-                cores_vec
+                Ok(cores_vec)
             },
             vec![],
         )
     }
-    fn marcacao(p_info: &HashMap<String, String>) -> String {
-        CA::extrair("marcação", p_info, |a| a, "".to_string())
+    fn marcacao(&self, p_info: &HashMap<String, String>) -> String {
+        self.extrair("marcação", p_info, Ok, "".to_string())
     }
-    fn referencias(p_info: &HashMap<String, String>) -> String {
-        CA::extrair("referências", p_info, |a| a, "".to_string())
+    fn referencias(&self, p_info: &HashMap<String, String>) -> String {
+        self.extrair("referências", p_info, Ok, "".to_string())
     }
-    fn aprovado_para(p_info: &HashMap<String, String>) -> String {
-        CA::extrair("aprovado para", p_info, |a| a, "".to_string())
+    fn aprovado_para(&self, p_info: &HashMap<String, String>) -> String {
+        self.extrair("aprovado para", p_info, Ok, "".to_string())
     }
-    fn descricao_completa(body: &Html) -> String {
+    fn descricao_completa(&self, body: &Html) -> String {
         let nome_h3 = "descrição completa";
         let selector = match Selector::parse("h3") {
             Ok(v) => v,
@@ -248,158 +302,225 @@ impl CA {
             if h3.text().collect::<String>().to_lowercase() == nome_h3 {
                 let descr_node = match h3.next_sibling() {
                     Some(v) => v,
-                    None => return "".to_string(),
+                    None => {
+                        return {
+                            warn!("CA{}: irmão da '{nome_h3}' não encontrado.", self.ca);
+                            "".to_string()
+                        }
+                    }
                 };
                 let descricao = match ElementRef::wrap(descr_node) {
                     Some(v) => v.text().collect::<String>(),
-                    None => return "".to_string(),
+                    None => {
+                        return {
+                            warn!(
+                                "CA{}: irmão do '{nome_h3}' não é um Node::ElementRef.",
+                                self.ca
+                            );
+                            "".to_string()
+                        }
+                    }
                 };
                 return descricao;
             }
         }
+        warn!("CA{}: h3 com nome '{nome_h3}' não encontrado.", self.ca);
         "".to_string()
     }
-}
-
-impl Laudo {
-    fn descricao(p_info: &HashMap<String, String>) -> String {
-        CA::extrair("n° do laudo", p_info, |a| a, "".to_string())
+    fn descricao_laboratorio(&self, p_info: &HashMap<String, String>) -> String {
+        self.extrair("n° do laudo", p_info, Ok, "".to_string())
     }
-    fn razao_social_laboratorio(p_info: &HashMap<String, String>) -> String {
-        CA::extrair("razão social", p_info, |a| a, "".to_string())
+    fn razao_social_laboratorio(&self, p_info: &HashMap<String, String>) -> String {
+        self.extrair("razão social", p_info, Ok, "".to_string())
     }
 
-    fn cnpj_laboratorio(p_info: &HashMap<String, String>) -> u64 {
-        CA::extrair(
-            "cnpj do laboratório",
-            p_info,
-            |a| {
-                // quero somente os números do CNPJ
-                a
-                    .chars()
-                    .filter(|x| x.is_numeric())
-                    .collect::<String>()
-                    .parse::<u64>().unwrap_or_default()
-            },
-            0,
-        )
+    fn cnpj_laboratorio(&self, p_info: &HashMap<String, String>) -> u64 {
+        self.extrair("cnpj do laboratório", p_info, extrair_numeros, 0)
     }
-}
-impl Fabricante {
-    //TODO: colocar CA nos erros para facilitar debugging.
-    fn link(body: &Html) -> String {
+    fn razao_social_fabricante(&self, p_info: &HashMap<String, String>) -> String {
+        self.extrair("razão social", p_info, Ok, "".to_string())
+    }
+    fn cnpj_fabricante(&self, p_info: &HashMap<String, String>) -> u64 {
+        self.extrair("cnpj", p_info, extrair_numeros, 0)
+    }
+    fn nome_fantasia_fabricante(&self, p_info: &HashMap<String, String>) -> String {
+        self.extrair("nome fantasia", p_info, Ok, "".to_string())
+    }
+    /// Retorna um par na forma (cidade, UF).
+    fn cidade_uf_extrator(&self, p_info: &HashMap<String, String>) -> (String, String) {
         let padrao = "".to_string();
-        let selector = match Selector::parse("[href*=\"https://consultaca.com/fabricantes/\"]") {
-            Ok(v) => v,
-            Err(_) => return padrao,
-        };
-        let selected_iter = body.select(&selector);
-        let a_element = match selected_iter.into_iter().next() {
-            Some(v) => v,
-            None => return padrao,
-        };
-        match a_element.attr("href") {
-            Some(v) => v.to_string(),
-            None => padrao,
-        }
-    }
-    fn razao_social(p_info: &HashMap<String, String>) -> String {
-        CA::extrair("razão social", p_info, |a| a, "".to_string())
-    }
-    fn cnpj(p_info: &HashMap<String, String>) -> u64 {
-        CA::extrair(
-            "cnpj",
-            p_info,
-            |a| {
-                // quero somente os números do CNPJ
-                a
-                    .chars()
-                    .filter(|x| x.is_numeric())
-                    .collect::<String>()
-                    .parse::<u64>().unwrap_or_default()
-
-            },
-            0,
-        )
-    }
-    fn nome_fantasia(p_info: &HashMap<String, String>) -> String {
-        CA::extrair("nome fantasia", p_info, |a| a, "".to_string())
-    }
-    fn cidade(p_info: &HashMap<String, String>) -> String {
-        let padrao = "".to_string();
-        let cidade_uf_str = CA::extrair("cidade/uf", p_info, |a| a, "".to_string());
+        let cidade_uf_str = self.extrair("cidade/uf", p_info, Ok, "".to_string());
         if cidade_uf_str.is_empty() {
-            return "".to_string();
+            warn!("CA{}: par cidade/uf não encontrado (fabricante).", self.ca);
+            return (padrao.to_owned(), padrao);
         }
         let cidade_uf_vec = cidade_uf_str.split("/").collect::<Vec<&str>>();
         // se par existe, então ...
         if cidade_uf_vec.len() == 2 {
-            cidade_uf_vec[0].to_string()
+            (cidade_uf_vec[0].to_string(), cidade_uf_vec[1].to_string())
         } else {
-            padrao
+            warn!("CA{}: par cidade/uf não é um par (fabricante).", self.ca);
+            (padrao.to_owned(), padrao)
         }
     }
-    fn uf(p_info: &HashMap<String, String>) -> String {
-        let padrao = "".to_string();
-        // we dont care about DRY around here
-        let cidade_uf_str = CA::extrair("cidade/uf", p_info, |a| a, "".to_string());
-        if cidade_uf_str.is_empty() {
-            return "".to_string();
-        }
-        let cidade_uf_vec = cidade_uf_str.split("/").collect::<Vec<&str>>();
-        // se par existe, então ...
-        if cidade_uf_vec.len() == 2 {
-            cidade_uf_vec[1].to_string()
-        } else {
-            padrao
-        }
+    fn cidade_fabricante(&self, p_info: &HashMap<String, String>) -> String {
+        self.cidade_uf_extrator(p_info).0
     }
-    fn qtd_cas(body: &Html) -> u16 {
+    fn uf_fabricante(&self, p_info: &HashMap<String, String>) -> String {
+        self.cidade_uf_extrator(p_info).1
+    }
+    fn qtd_cas_fabricante(&self, body: &Html) -> u16 {
         let padrao = 0;
         let selector = Selector::parse(".total.info.load-blockui").unwrap();
         let result = match body.select(&selector).next() {
             Some(e) => match e.text().collect::<String>().parse::<u16>() {
                 Ok(v) => v,
-                Err(_) => return padrao,
+                Err(_) => {
+                    return {
+                        warn!(
+                            "CA{}: quantidade de CA's do fabricante não é um inteiro.",
+                            self.ca
+                        );
+                        padrao
+                    }
+                }
             },
-            None => return padrao,
+            None => {
+                return {
+                    warn!(
+                        "CA{}: quantidade de CA's do fabricante não encontrada.",
+                        self.ca
+                    );
+                    padrao
+                }
+            }
         };
         result
+    }
+    fn link_fabricante(&self, body: &Html) -> String {
+        let padrao = "".to_string();
+        let selector = Selector::parse("[href*=\"https://consultaca.com/fabricantes/\"]").unwrap();
+        let selected_iter = body.select(&selector);
+        let a_element = match selected_iter.into_iter().next() {
+            Some(v) => v,
+            None => {
+                return {
+                    warn!("CA{}: link do fabricante não encontrado.", self.ca);
+                    padrao
+                }
+            }
+        };
+        match a_element.attr("href") {
+            Some(v) => v.to_string(),
+            None => {
+                warn!(
+                    "CA{}: elemento 'a' encontrado, mas não contém link (fabricante).",
+                    self.ca
+                );
+                padrao
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use log::LevelFilter;
+    use log4rs::{
+        append::{console::ConsoleAppender, file::FileAppender},
+        config::{Appender, Root},
+        encode::pattern::PatternEncoder,
+        Config,
+    };
+    use std::{
+        fs::{self},
+        sync::{LazyLock, Mutex},
+    };
+
+    static HANDLE: LazyLock<Mutex<log4rs::Handle>> = LazyLock::new(|| Mutex::new(setup_log()));
+
+    /// Retorna um `Handle` que será usado para mudar
+    /// as configurações do logger padrão.
+    #[allow(unused_must_use)]
+    fn setup_log() -> log4rs::Handle {
+        let default = ConsoleAppender::builder()
+            .encoder(Box::new(PatternEncoder::new("{d} - {m}{n}")))
+            .build();
+
+        let config = Config::builder()
+            .appender(Appender::builder().build("default", Box::new(default)))
+            .build(Root::builder().appender("default").build(LevelFilter::Warn))
+            .unwrap();
+
+        log4rs::init_config(config).unwrap()
+    }
+
+    /// Cria uma configuração para o logger e retorna um id.
+    /// O logger padrão passará a escrever no arquivo `/tmp/{test_id}.log`.
+    /// Cada teste que usa logging deve chamar essa função.
+    /// Essa função não é o suficiente para isolar os logs de cada teste.
+    /// Nós temos de rodar cada teste num processo separado para que o handle
+    /// não seja alterado quando não deve ser alterado.
+    /// (veja [`esse comentário`](https://github.com/rust-lang/rust/issues/47506#issuecomment-1655503393)).
+    fn config_specific_test(test_id: &str) -> String {
+        let encoder_str = "{d} - {m}{n}";
+        let requests = FileAppender::builder()
+            .append(false)
+            .encoder(Box::new(PatternEncoder::new(encoder_str)))
+            .build(format!("/tmp/{test_id}.log"))
+            .unwrap();
+
+        let config = Config::builder()
+            .appender(Appender::builder().build("requests", Box::new(requests)))
+            .build(
+                Root::builder()
+                    .appender("requests")
+                    .build(LevelFilter::Warn),
+            )
+            .unwrap();
+        HANDLE.lock().unwrap().set_config(config);
+        test_id.to_string()
+    }
+
+    /// Lê o conteúdo do log de um teste (veja `config_specific_test`).
+    fn read_test(test_id: String) -> String {
+        fs::read_to_string(format!("/tmp/{test_id}.log")).unwrap()
+    }
+
     use super::*;
     #[test]
-    fn test_extrair() {
+    fn extrair() {
         let info = HashMap::from([("chave".to_string(), "valor".to_string())]);
         assert_eq!(
-            CA::extrair("chave", &info, |a| a.to_string(), "".to_string()),
+            Extrator::new(777).extrair("chave", &info, Ok, "".to_string()),
             "valor"
         );
     }
 
     #[test]
-    fn test_extrair_sem_key_no_hashmap() {
+    fn extrair_sem_key_no_hashmap() {
+        let test_id = config_specific_test("extrair_sem_key_no_hashmap");
         let info = HashMap::from([]);
         assert_eq!(
-            CA::extrair("chave", &info, |a| a.to_string(), "".to_string()),
+            Extrator::new(777).extrair("SoliDeoGloria", &info, Ok, "".to_string()),
             ""
         );
+        let logs = read_test(test_id);
+        println!("{}", logs);
+        assert!(logs.contains("CA777: chave 'SoliDeoGloria'"));
     }
 
     #[test]
-    fn test_extrair_parsing() {
+    fn extrair_parsing() {
         let info = HashMap::from([("chave".to_string(), "valor".to_string())]);
         assert_eq!(
-            CA::extrair("chave", &info, |a| a.to_uppercase(), "".to_string()),
+            Extrator::new(777).extrair("chave", &info, |a| Ok(a.to_uppercase()), "".to_string()),
             "VALOR"
         );
     }
 
     #[test]
-    fn test_paragrafos_hashmap() {
+    fn paragrafos_hashmap() {
         let html = r#"
     <!DOCTYPE html>
     <meta charset="utf-8">
@@ -412,7 +533,8 @@ mod tests {
 "#;
 
         let documento = Html::parse_document(html);
-        let resultado = CA::paragrafos_hashmap(&documento).expect("criação do hashmap falhou.");
+        let resultado =
+            Extrator::paragrafos_hashmap(&documento).expect("criação do hashmap falhou.");
         assert_eq!(
             resultado,
             HashMap::from([
@@ -421,8 +543,22 @@ mod tests {
             ])
         );
     }
+    #[test]
+    fn erro_no_parsing() {
+        let test_id = config_specific_test("erro_no_parsing");
+        let info = HashMap::from([("chave".to_string(), "valor".to_string())]);
+        Extrator::new(777).extrair(
+            "chave",
+            &info,
+            |_| Err("IesusHominumSalvator".into()),
+            "".to_string(),
+        );
+        let content = read_test(test_id);
+        println!("{}", content);
+        assert!(content.contains("CA777 chave: erro no parsing"));
+    }
     #[tokio::test]
-    async fn test_consultar() {
+    async fn consultar() {
         let ca_codigo = 32551;
         let client = reqwest::Client::new();
         let ca = match CA::consultar(ca_codigo, client).await {
@@ -451,9 +587,10 @@ mod tests {
     ca: 32551,
     laudo: Laudo {
         descricao: "85.858; 87.820; 87.821.".to_string().to_string(),
-        cnpj_laboratorio: 63025530004282,
-        razao_social_laboratorio: "SEÇÃO TÉCNICA DE DESENVOLVIMENTO TECNOLÓGICO EM SAÚDE - IEE/USP".to_string(),
+        cnpj: 63025530004282,
+        razao_social: "SEÇÃO TÉCNICA DE DESENVOLVIMENTO TECNOLÓGICO EM SAÚDE - IEE/USP".to_string(),
     },
+    //FIXME: razao social do laudo e do fabricante são as mesmas
     fabricante: Fabricante {
         razao_social: "SEÇÃO TÉCNICA DE DESENVOLVIMENTO TECNOLÓGICO EM SAÚDE - IEE/USP".to_string(),
         cnpj: 177445000141,
@@ -464,6 +601,23 @@ mod tests {
         link: "".to_string(),
     }
 };
-        assert_eq!(ca,ca_esperado)
+        assert_eq!(ca, ca_esperado)
+    }
+
+    #[tokio::test]
+    async fn consultar_com_erro() {
+        let test_id = config_specific_test("consultar_com_erro");
+        let ca_codigo = 777777;
+        let client = reqwest::Client::new();
+        match CA::consultar(ca_codigo, client).await {
+            Ok(v) => v,
+            Err(e) => panic!("erro na consulta: {:#?}", e),
+        };
+        let content = read_test(test_id);
+        println!("{}", content);
+        assert_eq!(
+            content.matches("encontrad").count() + content.matches("presente").count(),
+            24
+        );
     }
 }

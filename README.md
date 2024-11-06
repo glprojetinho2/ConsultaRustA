@@ -63,3 +63,7 @@ TRO\".",
 ```
 
 O programa foi testado no Ubuntu 22.04.1.
+
+## Testes
+Os testes têm de ser executados com o comando `cargo test -- --test-threads=1` ou
+[`cargo nextest run`](https://nexte.st/) para que os logs sejam testados corretamente.
