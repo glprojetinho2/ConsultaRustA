@@ -1,5 +1,7 @@
 use std::env::args;
 
+use scraper::Html;
+
 pub mod info;
 
 #[tokio::main]
@@ -13,7 +15,19 @@ async fn main() {
         None => panic!("digite um CA."),
     };
     let client = reqwest::Client::new();
-    let consulta = match info::CA::consultar(ca, client).await {
+    let resp = client
+        .get("https://consultaca.com/".to_owned() + &ca.to_string())
+        .send()
+        .await;
+    let body_txt = match resp {
+        Ok(r) => match r.text().await {
+            Ok(txt) => txt,
+            Err(e) => panic!("{:#?}", e),
+        },
+        Err(e) => panic!("{}", e),
+    };
+    let body = Html::parse_document(&body_txt);
+    let consulta = match info::CA::consultar(&body).await {
         Ok(c) => c,
         Err(e) => panic!("{:#?}", e),
     };

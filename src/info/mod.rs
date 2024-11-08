@@ -1,10 +1,10 @@
 /*!
 Extrai informações do website do ConsultaCA e as usa para popular o struct CA.
 */
-// TODO: fazer a versão debug (erros existem) e release (erros não existem)
 mod util;
 use chrono::NaiveDate;
 use log::{error, warn};
+use scraper::selectable::Selectable;
 use scraper::{ElementRef, Html, Selector};
 use std::collections::HashMap;
 use util::extrair_numeros;
@@ -33,42 +33,40 @@ pub struct CA {
 }
 impl CA {
     /// Consulta a página do website do ConsultaCA e popula uma instância do struct CA.
-    pub async fn consultar(ca: u32, client: reqwest::Client) -> Result<CA> {
-        let resp = client
-            .get("https://consultaca.com/".to_owned() + &ca.to_string())
-            .send()
-            .await;
-        let body_txt = match resp {
-            Ok(r) => match r.text().await {
-                Ok(txt) => txt,
-                Err(e) => return Err(e.into()),
-            },
-            Err(e) => panic!("{}", e),
-        };
+    pub async fn consultar(body: &Html) -> Result<CA> {
+        let p_info_hashmap = Extrator::paragrafos_hashmap(body)?;
+
+        let ca = p_info_hashmap
+            .get("n° ca")
+            .unwrap_or(&"0".to_string())
+            .parse()?;
         let extrator = Extrator::new(ca);
 
-        // A extração da informação ocorre de duas formas:
-        // através do body do site e através dum HashMap
-        // gerado a partir dos parágrafos do site.
-        let body = Html::parse_document(&body_txt);
-        let p_info_hashmap = Extrator::paragrafos_hashmap(&body)?;
+        let p_info_hashmap_fabricante = match extrator.secao_com_h3(body, "fabricante") {
+            Some(v) => Extrator::paragrafos_hashmap(v)?,
+            None => HashMap::new(),
+        };
+        let p_info_hashmap_laudo = match extrator.secao_com_h3(body, "laudos") {
+            Some(v) => Extrator::paragrafos_hashmap(v)?,
+            None => HashMap::new(),
+        };
 
         Ok(CA {
             validade: extrator.validade(&p_info_hashmap),
             processo: extrator.processo(&p_info_hashmap),
-            descricao: extrator.descricao(&body),
-            grupo: extrator.grupo(&body),
+            descricao: extrator.descricao(body),
+            grupo: extrator.grupo(body),
             natureza: extrator.natureza(&p_info_hashmap),
             situacao: extrator.situacao(&p_info_hashmap),
             aprovado_para: extrator.aprovado_para(&p_info_hashmap),
             cores: extrator.cores(&p_info_hashmap),
             marcacao: extrator.marcacao(&p_info_hashmap),
             referencias: extrator.referencias(&p_info_hashmap),
-            normas: extrator.normas(&body),
-            descricao_completa: extrator.descricao_completa(&body),
+            normas: extrator.normas(body),
+            descricao_completa: extrator.descricao_completa(body),
             ca,
-            laudo: Laudo::new(ca, &p_info_hashmap),
-            fabricante: Fabricante::new(ca, &p_info_hashmap, &body),
+            laudo: Laudo::new(ca, &p_info_hashmap_laudo),
+            fabricante: Fabricante::new(ca, &p_info_hashmap_fabricante, body),
         })
     }
 }
@@ -139,14 +137,20 @@ impl Extrator {
     /// valor será retornado depois de passar pelo `parse_callback`.
     /// O argumento `nome` só serve para deixar mais claro o erro que ocorre
     /// quando não achamos a chave nos `p.info` (ou quando o valor é vazio).
-    fn paragrafos_hashmap(body: &Html) -> Result<HashMap<String, String>> {
+    fn paragrafos_hashmap<'a, S: Selectable<'a> + Clone>(
+        body: S,
+    ) -> Result<HashMap<String, String>> {
         let selector = Selector::parse("p")?;
-        let p_info = body.select(&selector);
+        let p_info = body.clone().select(&selector);
         let mut resultado = HashMap::new();
         for paragrafo in p_info {
             let texto = paragrafo.text().collect::<String>();
+            let separator = "efa3fe20-aa7d-4672-be5a-890c505c3637";
+            let chave_separada_do_valor = texto.replacen(":", separator, 1);
             // [chave, valor]
-            let par = texto.split(":").collect::<Vec<&str>>();
+            let par = chave_separada_do_valor
+                .split(separator)
+                .collect::<Vec<&str>>();
             if par.len() == 2 && !&par[1].is_empty() {
                 resultado.insert(par[0].trim().to_lowercase(), par[1].trim().to_string());
             }
@@ -221,6 +225,43 @@ impl Extrator {
         }
         elemento_txt
     }
+    /// Retorna um elemento HTML (selecionável) com base no seu h3 interno.
+    /// # Exemplo de HTML
+    /// ```html
+    /// <div class="grupo_result_ca"> <!-- Esse é o elemento retornado -->
+    ///   <h3>Nome do h3</h3> <!-- nome do h3 (pode ser maiúsculo ou minúsculo) -->
+    ///   <p class="info">info</p>
+    /// </div>
+    /// ```
+    fn secao_com_h3<'a>(&self, body: &'a Html, nome: &str) -> Option<ElementRef<'a>> {
+        let selector = Selector::parse("h3").unwrap();
+        let h3s = body.select(&selector);
+        for h3 in h3s {
+            if h3.text().collect::<String>().to_lowercase() == nome {
+                let pai = match h3.parent() {
+                    Some(v) => v,
+                    None => {
+                        return {
+                            warn!("CA{}: pai do '{nome}' não encontrado.", self.ca);
+                            None
+                        }
+                    }
+                };
+                // ElementRef implementa o trait `Selectable`
+                return match ElementRef::wrap(pai) {
+                    Some(v) => Some(v),
+                    None => {
+                        return {
+                            warn!("CA{}: pai do '{nome}' não é um Node::Element.", self.ca);
+                            None
+                        }
+                    }
+                };
+            };
+        }
+
+        None
+    }
 
     fn validade(&self, p_info: &HashMap<String, String>) -> NaiveDate {
         self.extrair(
@@ -293,39 +334,16 @@ impl Extrator {
     }
     fn descricao_completa(&self, body: &Html) -> String {
         let nome_h3 = "descrição completa";
-        let selector = match Selector::parse("h3") {
-            Ok(v) => v,
-            Err(_) => return "".to_string(),
+        let p_selector = Selector::parse("p").unwrap();
+        let elemento_descr = match self.secao_com_h3(body, nome_h3) {
+            Some(v) => v,
+            None => return "".to_string(),
         };
-        let h3s = body.select(&selector);
-        for h3 in h3s {
-            if h3.text().collect::<String>().to_lowercase() == nome_h3 {
-                let descr_node = match h3.next_sibling() {
-                    Some(v) => v,
-                    None => {
-                        return {
-                            warn!("CA{}: irmão da '{nome_h3}' não encontrado.", self.ca);
-                            "".to_string()
-                        }
-                    }
-                };
-                let descricao = match ElementRef::wrap(descr_node) {
-                    Some(v) => v.text().collect::<String>(),
-                    None => {
-                        return {
-                            warn!(
-                                "CA{}: irmão do '{nome_h3}' não é um Node::ElementRef.",
-                                self.ca
-                            );
-                            "".to_string()
-                        }
-                    }
-                };
-                return descricao;
-            }
-        }
-        warn!("CA{}: h3 com nome '{nome_h3}' não encontrado.", self.ca);
-        "".to_string()
+        let p = match elemento_descr.select(&p_selector).next() {
+            Some(v) => v,
+            None => return "".to_string(),
+        };
+        p.text().collect::<String>()
     }
     fn descricao_laboratorio(&self, p_info: &HashMap<String, String>) -> String {
         self.extrair("n° do laudo", p_info, Ok, "".to_string())
@@ -559,9 +577,9 @@ mod tests {
     }
     #[tokio::test]
     async fn consultar() {
-        let ca_codigo = 32551;
-        let client = reqwest::Client::new();
-        let ca = match CA::consultar(ca_codigo, client).await {
+        let sucesso_pagina = fs::read_to_string("src/info/pagina/sucesso.html").unwrap();
+        let body = Html::parse_document(&sucesso_pagina);
+        let ca = match CA::consultar(&body).await {
             Ok(v) => v,
             Err(e) => panic!("erro na consulta: {:#?}", e),
         };
@@ -586,13 +604,12 @@ mod tests {
     ],
     ca: 32551,
     laudo: Laudo {
-        descricao: "85.858; 87.820; 87.821.".to_string().to_string(),
+        descricao: "85.858; 87.820; 87.821.".to_string(),
         cnpj: 63025530004282,
         razao_social: "SEÇÃO TÉCNICA DE DESENVOLVIMENTO TECNOLÓGICO EM SAÚDE - IEE/USP".to_string(),
     },
-    //FIXME: razao social do laudo e do fabricante são as mesmas
     fabricante: Fabricante {
-        razao_social: "SEÇÃO TÉCNICA DE DESENVOLVIMENTO TECNOLÓGICO EM SAÚDE - IEE/USP".to_string(),
+        razao_social: "FARP INDUSTRIA DE ROUPAS LTDA".to_string(),
         cnpj: 177445000141,
         nome_fantasia: "FARP UNIFORMES".to_string(),
         cidade: "ITUMBIARA".to_string(),
@@ -607,17 +624,24 @@ mod tests {
     #[tokio::test]
     async fn consultar_com_erro() {
         let test_id = config_specific_test("consultar_com_erro");
-        let ca_codigo = 777777;
-        let client = reqwest::Client::new();
-        match CA::consultar(ca_codigo, client).await {
-            Ok(v) => v,
+        let body = Html::parse_document("");
+        let consulta = match CA::consultar(&body).await {
+            Ok(v) => format!("{:#?}", v),
             Err(e) => panic!("erro na consulta: {:#?}", e),
         };
         let content = read_test(test_id);
         println!("{}", content);
         assert_eq!(
             content.matches("encontrad").count() + content.matches("presente").count(),
-            24
+            // isto aqui é a quantidade de propriedades (que não são structs) do struct CA.
+            // O -6 elimina as seguintes linhas:
+            // CA {
+            // laudo: Laudo {
+            // },
+            // fabricante: Fabricante {
+            //     },
+            // }
+            consulta.lines().count() - 6
         );
     }
 }

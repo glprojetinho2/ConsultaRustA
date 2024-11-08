@@ -1,13 +1,18 @@
 # ConsultaRustA
 
-Ferramenta de linha de comando que busca informações sobre CA's no site consultaca.com.
+Ferramenta de linha de comando que busca informações sobre CA's no site
+consultaca.com.
 
 ## Contruir executável
+
 Antes de tudo, instale o rust:
+
 ```bash
 curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh
 ```
+
 Depois execute os comandos abaixo:
+
 ```bash
 git clone https://github.com/glprojetinho2/ConsultaRustA.git
 cd ConsultaRustA
@@ -16,10 +21,13 @@ cargo build --release
 ```
 
 ## Uso
+
 O comando é autoexplicativo (por enquanto). Veja o uso básico:
+
 ```bash
 consultarca 445
 ```
+
 ```
 CA {
     descricao: "RESPIRADOR PURIFICADOR DE AR TIPO PEÇA SEMIFACIAL FILTRANTE PARA PARTÍCULAS PFF1",
@@ -47,8 +55,8 @@ TRO\".",
     ca: 445,
     laudo: Laudo {
         descricao: "Certificado de Conformidade nº BR37289007",
-        cnpj_laboratorio: 10000000000052,
-        razao_social_laboratorio: "3M DO BRASIL LTDA",
+        cnpj: 10000000000052,
+        razao_social: "OCP: Bureau Veritas Certification - BVQI",
     },
     fabricante: Fabricante {
         razao_social: "3M DO BRASIL LTDA",
@@ -65,5 +73,7 @@ TRO\".",
 O programa foi testado no Ubuntu 22.04.1.
 
 ## Testes
-Os testes têm de ser executados com o comando `cargo test -- --test-threads=1` ou
-[`cargo nextest run`](https://nexte.st/) para que os logs sejam testados corretamente.
+
+Os testes têm de ser executados com o comando `cargo test -- --test-threads=1`
+ou [`cargo nextest run`](https://nexte.st/) para que os logs sejam testados
+corretamente.
