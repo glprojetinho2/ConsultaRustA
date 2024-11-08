@@ -27,7 +27,7 @@ pub struct CA {
     marcacao: String,
     referencias: String,
     normas: Vec<String>,
-    ca: u32,
+    pub ca: u32,
     laudo: Laudo,
     fabricante: Fabricante,
 }
