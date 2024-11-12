@@ -1,5 +1,6 @@
-
-
+//! Exemplos de HTML do consultaca.com para testes.
+#![allow(unused)]
+pub const SUCESSO: &str = r#"
 <!DOCTYPE html>
 
 <html lang="pt">
@@ -72,7 +73,7 @@
 
             $(".cadastro-unico").click(function () {
                 $.get("form-cadastro", function (retorno) {
-                    $("#modalFormCadastroContent").html(retorno);
+                    $(" #modalFormCadastroContent").html(retorno);
                 })
                 .complete(function (retorno) {
                     $('#modalFormCadastro').reveal();
@@ -88,8 +89,8 @@
         });
 
         function verifyAutocomplete() {
-            if ($("#typeaheadSearch").val().indexOf('@') > -1) {
-                $("#typeaheadSearch").val("");
+            if ($(" #typeaheadSearch").val().indexOf('@') > -1) {
+                $(" #typeaheadSearch").val("");
                 $("body").trigger('click')
             }
         }
@@ -166,7 +167,7 @@
             <span>Buscar por: </span>
 
             <label>
-                <input type="radio" value="1" name="searchType" class="searchType" checked="checked" /> <a href="#" data-reveal-id="modalCA" style="cursor:help;font-weight:normal;" title="O que é CA?">CA</a>
+                <input type="radio" value="1" name="searchType" class="searchType" checked="checked" /> <a href=" #" data-reveal-id="modalCA" style="cursor:help;font-weight:normal;" title="O que é CA?">CA</a>
             </label>
 
             <label style="cursor: pointer;">
@@ -582,8 +583,9 @@
       <p>O <strong>CA - Certificado de Aprovação</strong> - é um documento emitido pelo Ministério do Trabalho e Emprego que tem por finalidade avaliar e manter um padrão nos equipamento de proteção.</p>
       <p>A <strong>NR6 - que regulariza os equipamentos de proteção individual</strong> - exige que todo equipamento de proteção individual, de fabricação nacional ou importado, só poderá ser posto à venda ou utilizado com a marcação do CA.</p>
       <p>Para se obter um <strong>CA</strong>, o fabricante ou importador, deve enviar uma amostra do equipamento para um laboratório autorizado, o laboratório faz testes com esse equipamento e emite um laudo com as características do produto. Esse laudo é enviado ao MTE para emissão do CA que garantirá o padrão dos equipamentos que devem obedecer as especificações presentes no laudo.</p>
-      <p><strong>Como funciona o Portal ConsultaCA.com? <a href="#" onclick="$('#close-o-que-e').trigger('click');$('.fancybox-media').trigger('click');" style="color:#900;">Assista nosso vídeo!</a></strong></p>
+      <p><strong>Como funciona o Portal ConsultaCA.com? <a href=" #" onclick="$('#close-o-que-e').trigger('click');$('.fancybox-media').trigger('click');" style="color:#900;">Assista nosso vídeo!</a></strong></p>
     </div>
 
   </body>
 </html>
+"#;

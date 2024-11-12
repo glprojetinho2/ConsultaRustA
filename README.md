@@ -15,7 +15,7 @@ Depois execute os comandos abaixo:
 
 ```bash
 git clone https://github.com/glprojetinho2/ConsultaRustA.git
-cd ConsultaRustA
+cd ConsultaRustA/crates/cli
 cargo build --release
 ./target/release/consultarca
 ```

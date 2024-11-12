@@ -1,0 +1,15 @@
+[package]
+name = "api"
+version = "0.1.0"
+authors = ["Gabriel Schmidt <glprojetinho@gmail.com>"]
+description = """
+API REST para consulta de dados do site consultaca.com.
+"""
+homepage = "https://github.com/glprojetinho2/ConsultaRustA"
+repository = "https://github.com/glprojetinho2/ConsultaRustA"
+edition = "2021"
+license = "Unlicense OR MIT"
+rust-version = "1.82"
+
+[dependencies]
+cascraper = { version="1.0.0", path = "../cascraper" }

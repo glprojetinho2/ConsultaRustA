@@ -1,7 +1,7 @@
 /*!
 Extrai informações do website do ConsultaCA e as usa para popular o struct CA.
 */
-mod util;
+use crate::util;
 use chrono::NaiveDate;
 use log::{error, warn};
 use scraper::selectable::Selectable;
@@ -443,6 +443,7 @@ impl Extrator {
 
 #[cfg(test)]
 mod tests {
+    use crate::pagina::SUCESSO;
     use log::LevelFilter;
     use log4rs::{
         append::{console::ConsoleAppender, file::FileAppender},
@@ -577,8 +578,7 @@ mod tests {
     }
     #[tokio::test]
     async fn consultar() {
-        let sucesso_pagina = fs::read_to_string("src/info/pagina/sucesso.html").unwrap();
-        let body = Html::parse_document(&sucesso_pagina);
+        let body = Html::parse_document(SUCESSO);
         let ca = match CA::consultar(&body).await {
             Ok(v) => v,
             Err(e) => panic!("erro na consulta: {:#?}", e),
