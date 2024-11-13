@@ -57,7 +57,9 @@ impl CA {
     /// Consulta a página do website do ConsultaCA e popula uma instância do struct CA.
     pub async fn consultar(body: &Html, ca: u32) -> Result<CA, CAError> {
         let p_info_hashmap = Extrator::paragrafos_hashmap(body);
-
+        if p_info_hashmap.get("n° ca").is_none() {
+            return Err(CAError::NaoEncontrado(ca));
+        }
         let extrator = Extrator::new(ca);
 
         let p_info_hashmap_fabricante = match extrator.secao_com_h3(body, "fabricante") {
