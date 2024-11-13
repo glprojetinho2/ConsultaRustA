@@ -1,5 +1,5 @@
+use cascraper::pagina;
 use clap::{builder::Styles, ArgAction, Parser};
-use scraper::Html;
 #[derive(Parser, Debug)]
 #[command(
     author,
@@ -35,19 +35,8 @@ async fn main() {
     let args = Args::parse();
     for ca in args.cas {
         let client = reqwest::Client::new();
-        let resp = client
-            .get("https://consultaca.com/".to_owned() + &ca.to_string())
-            .send()
-            .await;
-        let body_txt = match resp {
-            Ok(r) => match r.text().await {
-                Ok(txt) => txt,
-                Err(e) => panic!("{:#?}", e),
-            },
-            Err(e) => panic!("{}", e),
-        };
-        let body = Html::parse_document(&body_txt);
-        let consulta = match cascraper::CA::consultar(&body).await {
+        let body = pagina(Some(client), ca).await;
+        let consulta = match cascraper::CA::consultar(&body, ca).await {
             Ok(c) => c,
             Err(e) => panic!("{:#?}", e),
         };

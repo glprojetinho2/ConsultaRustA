@@ -1,9 +1,7 @@
 use core::error;
 
-pub type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
-
 /// Extrai números de uma `String`.
-pub fn extrair_numeros(a: String) -> Result<u64> {
+pub fn extrair_numeros(a: String) -> Result<u64, Box<dyn error::Error>> {
     Ok(a.chars()
         .filter(|x| x.is_numeric())
         .collect::<String>()

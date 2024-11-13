@@ -72,6 +72,19 @@ TRO\".",
 
 O programa foi testado no Ubuntu 22.04.1.
 
+## API REST
+
+Há também uma API no projeto. Para utilizá-la, execute os comandos abaixo:
+
+```bash
+git clone https://github.com/glprojetinho2/ConsultaRustA.git
+cd ConsultaRustA/crates/api
+cargo build --release
+./target/release/api
+```
+
+O output é similar ao output mostrado na seção de uso.
+
 ## Testes
 
 Os testes têm de ser executados com o comando `cargo test -- --test-threads=1`

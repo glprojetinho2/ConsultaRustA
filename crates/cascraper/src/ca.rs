@@ -1,19 +1,41 @@
 /*!
 Extrai informações do website do ConsultaCA e as usa para popular o struct CA.
 */
+use crate::errors::CAError;
 use crate::util;
 use chrono::NaiveDate;
 use log::{error, warn};
+use reqwest::Client;
 use scraper::selectable::Selectable;
 use scraper::{ElementRef, Html, Selector};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use util::extrair_numeros;
-use util::Result;
+
+/// Pega o HTML da página do website do ConsultaCA.
+pub async fn pagina(client: Option<Client>, ca: u32) -> Html {
+    let client = match client {
+        Some(c) => c,
+        None => Client::new(),
+    };
+    let resp = client
+        .get("https://consultaca.com/".to_owned() + &ca.to_string())
+        .send()
+        .await;
+    let body_txt = match resp {
+        Ok(r) => match r.text().await {
+            Ok(txt) => txt,
+            Err(e) => panic!("{:#?}", e),
+        },
+        Err(e) => panic!("{}", e),
+    };
+    Html::parse_document(&body_txt)
+}
 
 /// Representa um CA.
 /// A única coisa que o struct tem de saber é o código do CA.
 /// O resto das informações será retirado do sítio https://consultaca.com/.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct CA {
     descricao: String,
     grupo: String,
@@ -33,21 +55,17 @@ pub struct CA {
 }
 impl CA {
     /// Consulta a página do website do ConsultaCA e popula uma instância do struct CA.
-    pub async fn consultar(body: &Html) -> Result<CA> {
-        let p_info_hashmap = Extrator::paragrafos_hashmap(body)?;
+    pub async fn consultar(body: &Html, ca: u32) -> Result<CA, CAError> {
+        let p_info_hashmap = Extrator::paragrafos_hashmap(body);
 
-        let ca = p_info_hashmap
-            .get("n° ca")
-            .unwrap_or(&"0".to_string())
-            .parse()?;
         let extrator = Extrator::new(ca);
 
         let p_info_hashmap_fabricante = match extrator.secao_com_h3(body, "fabricante") {
-            Some(v) => Extrator::paragrafos_hashmap(v)?,
+            Some(v) => Extrator::paragrafos_hashmap(v),
             None => HashMap::new(),
         };
         let p_info_hashmap_laudo = match extrator.secao_com_h3(body, "laudos") {
-            Some(v) => Extrator::paragrafos_hashmap(v)?,
+            Some(v) => Extrator::paragrafos_hashmap(v),
             None => HashMap::new(),
         };
 
@@ -71,7 +89,7 @@ impl CA {
     }
 }
 /// Representa um laudo.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Laudo {
     descricao: String,
     cnpj: u64,
@@ -89,7 +107,7 @@ impl Laudo {
 }
 
 /// Representa um fabricante.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Fabricante {
     razao_social: String,
     cnpj: u64,
@@ -137,10 +155,8 @@ impl Extrator {
     /// valor será retornado depois de passar pelo `parse_callback`.
     /// O argumento `nome` só serve para deixar mais claro o erro que ocorre
     /// quando não achamos a chave nos `p.info` (ou quando o valor é vazio).
-    fn paragrafos_hashmap<'a, S: Selectable<'a> + Clone>(
-        body: S,
-    ) -> Result<HashMap<String, String>> {
-        let selector = Selector::parse("p")?;
+    fn paragrafos_hashmap<'a, S: Selectable<'a> + Clone>(body: S) -> HashMap<String, String> {
+        let selector = Selector::parse("p").unwrap();
         let p_info = body.clone().select(&selector);
         let mut resultado = HashMap::new();
         for paragrafo in p_info {
@@ -155,7 +171,7 @@ impl Extrator {
                 resultado.insert(par[0].trim().to_lowercase(), par[1].trim().to_string());
             }
         }
-        Ok(resultado)
+        resultado
     }
 
     /// Retorna valor do `hashmap` associado à chave `informacao` depois
@@ -175,7 +191,7 @@ impl Extrator {
         padrao: T,
     ) -> T
     where
-        F: Fn(String) -> Result<T>,
+        F: Fn(String) -> Result<T, Box<dyn std::error::Error>>,
     {
         let result = match hashmap.get(informacao) {
             Some(value) => match parse_callback(value.to_string()) {
@@ -552,8 +568,7 @@ mod tests {
 "#;
 
         let documento = Html::parse_document(html);
-        let resultado =
-            Extrator::paragrafos_hashmap(&documento).expect("criação do hashmap falhou.");
+        let resultado = Extrator::paragrafos_hashmap(&documento);
         assert_eq!(
             resultado,
             HashMap::from([
@@ -578,8 +593,9 @@ mod tests {
     }
     #[tokio::test]
     async fn consultar() {
+        let test_id = config_specific_test("consultar_com_erro");
         let body = Html::parse_document(SUCESSO);
-        let ca = match CA::consultar(&body).await {
+        let ca = match CA::consultar(&body, 32551).await {
             Ok(v) => v,
             Err(e) => panic!("erro na consulta: {:#?}", e),
         };
@@ -618,30 +634,20 @@ mod tests {
         link: "".to_string(),
     }
 };
-        assert_eq!(ca, ca_esperado)
-    }
+        assert_eq!(ca, ca_esperado);
 
-    #[tokio::test]
-    async fn consultar_com_erro() {
-        let test_id = config_specific_test("consultar_com_erro");
-        let body = Html::parse_document("");
-        let consulta = match CA::consultar(&body).await {
-            Ok(v) => format!("{:#?}", v),
-            Err(e) => panic!("erro na consulta: {:#?}", e),
-        };
         let content = read_test(test_id);
-        println!("{}", content);
         assert_eq!(
             content.matches("encontrad").count() + content.matches("presente").count(),
-            // isto aqui é a quantidade de propriedades (que não são structs) do struct CA.
-            // O -6 elimina as seguintes linhas:
-            // CA {
-            // laudo: Laudo {
-            // },
-            // fabricante: Fabricante {
-            //     },
-            // }
-            consulta.lines().count() - 6
+            2
+        );
+    }
+    #[tokio::test]
+    async fn ca_nao_encontrado() {
+        let body = Html::parse_document("");
+        assert_eq!(
+            CA::consultar(&body, 7777777).await.unwrap_err(),
+            CAError::NaoEncontrado(7777777)
         );
     }
 }
