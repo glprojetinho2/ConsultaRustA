@@ -83,7 +83,8 @@ cargo build --release
 ./target/release/api
 ```
 
-O output é similar ao output mostrado na seção de uso.
+O output é similar ao output mostrado na seção de uso. Vá para
+[este link](http://localhost:8000/v1/ca/445) para testar a API.
 
 ## Testes
 
